@@ -1,170 +1,187 @@
 import { NextResponse } from "next/server";
-// KANKA: lib/firebase dosyasının konumuna göre burayı ayarladım
 import { db } from "../../lib/firebase"; 
-import { collection, addDoc, query, getDocs, limit, orderBy, where } from "firebase/firestore";
+import { collection, addDoc, query, getDocs, limit, orderBy } from "firebase/firestore";
 import axios from "axios"; 
+import * as cheerio from "cheerio"; 
+import RSSParser from "rss-parser"; 
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import puppeteer from "puppeteer-core";
-import chromium from "@sparticuz/chromium";
 
-// --- KANKA: SLUG OLUŞTURUCU ---
-const slugOlustur = (metin: string) => {
-  return metin.toLowerCase().trim()
-    .replace(/ /g, '-').replace(/ı/g, 'i').replace(/ğ/g, 'g')
-    .replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ö/g, 'o').replace(/ç/g, 'c');
-};
+const parser = new RSSParser();
 
-// --- KANKA: BAŞLIK BENZERLİK KONTROLÜ ---
-const benzerlikVarMi = (yeniBaslik: string, eskiBasliklar: string[]) => {
-  const temizle = (s: string) => s.toLowerCase()
-    .replace(/[^a-z0-9ğüşıöç ]/g, "")
-    .split(" ")
-    .filter(k => k.length > 2);
-    
-  const yeniKelimeler = temizle(yeniBaslik);
-  for (const eski of eskiBasliklar) {
-    const eskiKelimeler = temizle(eski);
-    const ortak = yeniKelimeler.filter(k => eskiKelimeler.includes(k)).length;
-    const oran = ortak / Math.max(yeniKelimeler.length, eskiKelimeler.length);
-    if (oran > 0.6) return true; 
+// --- KATEGORİ SİHİRBAZI: KESKİN YERLEŞİM VE ÇOKLU VİTRİN MÜHRÜ ---
+const kategoriEsle = (anaKategori: string, kaynak: string, baslik: string = "") => {
+  const k = (anaKategori + " " + baslik).toUpperCase();
+  let katlar: string[] = [];
+  
+  // 1. KOCAELİ KUTSAL BÖLGESİ (Sadece Çağdaş Kocaeli sızabilir)
+  if (kaynak === 'Çağdaş Kocaeli') {
+    katlar.push('GÜNDEM'); 
+    katlar.push('ANASLIDER'); // En üstteki Kocaeli Slider'ı sadece yerel olur
+
+    // Yerel Spor Ayrımı: Sütunlara gider
+    if (k.includes('SPOR') || k.includes('KOCAELİSPOR')) {
+      katlar.push('YEREL SPOR');
+    }
+    // Yerel Yaşam -> Hayatın İçinden
+    if (k.includes('YAŞAM') || k.includes('MAGAZİN')) {
+      katlar.push('HAYATIN İÇİNDEN');
+    }
+  } else {
+    // 2. ULUSAL BÖLGE (RSS Kaynağına Sadakat)
+    // RSS'den ne gelirse o havuza düşer
+    const rssKat = anaKategori.toUpperCase().trim();
+    katlar.push(rssKat === 'TÜRKİYE' ? 'TÜRKİYE HABERLERİ' : rssKat);
   }
-  return false;
+
+  // 3. İSTİSNAİ ÇOKLU KATEGORİ (Sadece Türkiye Haberleri veya Gündem içinden süzülür)
+  // Bir haber Türkiye Haberi veya Gündem olsa bile içinde özel konu varsa oraya da kopyalanır
+  if (katlar.includes('TÜRKİYE HABERLERİ') || katlar.includes('GÜNDEM')) {
+    if (k.includes('OTOMOBİL') || k.includes('ARABA') || k.includes('TOGG')) katlar.push('OTOMOBİL');
+    if (k.includes('SAĞLIK') || k.includes('HASTANE') || k.includes('DOKTOR')) katlar.push('SAĞLIK');
+    if (k.includes('EĞİTİM') || k.includes('OKUL') || k.includes('SINAV')) katlar.push('EĞİTİM');
+    if (k.includes('EMLAK') || k.includes('KONUT') || k.includes('TOKİ')) katlar.push('EMLAK');
+    if (k.includes('EKONOMİ') || k.includes('BORSA') || k.includes('ALTIN')) katlar.push('EKONOMİ');
+  }
+
+  // 4. SPOR DİSİPLİNİ: Ulusal Spor asla Türkiye Haberleri'ne sızmaz, sadece kendi Slider'ına gider.
+  if (katlar.includes('SPOR')) {
+    return ['SPOR']; // Spor haberi sadece spordur kanka
+  }
+
+  return [...new Set(katlar)]; 
 };
 
-// --- RESİM AVCISI ---
-async function akilliResimAvcisi(page: any) {
-  return await page.evaluate(() => {
-    const metaSelectors = ['meta[property="og:image"]', 'meta[name="twitter:image"]', 'link[rel="image_src"]', 'meta[name="thumbnail"]'];
-    for (const selector of metaSelectors) {
-      const content = document.querySelector(selector)?.getAttribute('content');
-      if (content && content.startsWith('http')) return content;
-    }
-    const selectorList = ['article img', 'figure img', '.haber_resmi img', '.content img', '.post-thumbnail img', '.wp-post-image'];
-    for (const s of selectorList) {
-      const img = document.querySelector(s) as HTMLImageElement;
-      if (img) {
-        const src = img.getAttribute('data-src') || img.getAttribute('src') || img.getAttribute('data-original');
-        if (src && src.startsWith('http')) return src;
-      }
-    }
-    return null;
-  });
-}
+const ULUSAL_RSS = [
+  { kat: 'SPOR', kaynak: 'A Haber Spor', url: 'https://www.ahaber.com.tr/rss/spor.xml' },
+  { kat: 'EKONOMİ', kaynak: 'A Haber', url: 'https://www.ahaber.com.tr/rss/ekonomi.xml' },
+  { kat: 'MAGAZİN', kaynak: 'A Haber', url: 'https://www.ahaber.com.tr/rss/magazin.xml' },
+  { kat: 'HAYATIN İÇİNDEN', kaynak: 'A Haber', url: 'https://www.ahaber.com.tr/rss/yasam.xml' },
+  { kat: 'OTOMOBİL', kaynak: 'A Haber', url: 'https://www.ahaber.com.tr/rss/otomobil.xml' },
+  { kat: 'BİLİM TEKNOLOJİ', kaynak: 'A Haber', url: 'https://www.ahaber.com.tr/rss/teknoloji.xml' },
+  { kat: 'SAĞLIK', kaynak: 'A Haber', url: 'https://www.ahaber.com.tr/rss/saglik.xml' },
+  { kat: 'KÜLTÜR SANAT', kaynak: 'CNN Türk', url: 'https://www.cnnturk.com/feed/rss/kultur-sanat/news' },
+  { kat: 'DÜNYA', kaynak: 'CNN Türk', url: 'https://www.cnnturk.com/feed/rss/dunya/news' },
+  { kat: 'EĞİTİM', kaynak: 'CNN Türk', url: 'https://www.cnnturk.com/feed/rss/egitim/news' },
+  { kat: 'TÜRKİYE HABERLERİ', kaynak: 'CNN Türk', url: 'https://www.cnnturk.com/feed/rss/turkiye/news' }
+];
 
-// --- LİNK TOPLAYICI ---
-async function linkleriTopla(browser: any, siteUrl: string) {
-  try {
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36');
-    await page.goto(siteUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
-    const links = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('a'))
-        .map(a => ({ link: a.href, baslik: a.innerText.trim() }))
-        .filter(item => item.link.startsWith('http') && item.baslik.length > 40)
-        .slice(0, 15);
-    });
-    await page.close();
-    return links;
-  } catch { return []; }
-}
-
-// --- HABER DETAYINA SIZMA ---
-async function habereSizVeCek(browser: any, url: string) {
-  let page = null;
-  try {
-    page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36');
-    await page.setViewport({ width: 1280, height: 800 });
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
-    await page.evaluate(() => window.scrollBy(0, 600));
-    await new Promise(r => setTimeout(r, 2000));
-    const resim = await akilliResimAvcisi(page);
-    const icerik = await page.evaluate(() => {
-      const h1 = document.querySelector('h1')?.innerText?.trim() || '';
-      const metin = Array.from(document.querySelectorAll('p, article p, .haber_metni p, div.content p'))
-        .map(p => p.textContent?.trim())
-        .filter(t => t && t.length > 60)
-        .join('\n\n');
-      return { h1, metin };
-    });
-    return { ...icerik, resim };
-  } catch { return null; }
-  finally { if (page) await (page as any).close(); }
-}
-
-async function resmiBase64Yap(url: string) {
-  if (!url) return null;
-  try {
-    const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 15000 });
-    return {
-      inlineData: { data: Buffer.from(res.data).toString("base64"), mimeType: res.headers["content-type"] || "image/jpeg" },
-    };
-  } catch { return null; }
-}
+const YEREL_HEDEFLER = ['GÜNDEM', 'SİYASET', 'KOCAELİSPOR', 'ASAYİŞ', 'YAŞAM'];
 
 export async function GET() {
-  console.log("🚀 HABERPİK VERCEL BOT GÖREVDE!");
+  console.log("🚀 HABERPİK 2.5 FLASH: DİSİPLİNLİ YERLEŞİM OPERASYONU!");
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Kanka 2.5 yerine 1.5 flash kullan Vercel'de daha stabil
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
   let sayac = 0;
-  let browser = null;
 
   try {
-    const isLocal = process.env.NODE_ENV === 'development';
-    
-    // VERCEL İÇİN KRİTİK AYARLAR
-    browser = await puppeteer.launch({
-      args: isLocal ? [] : chromium.args,
-      defaultViewport: chromium.defaultViewport,
-      executablePath: isLocal ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" : await chromium.executablePath(),
-      headless: isLocal ? true : chromium.headless,
-    });
-
-    const snap = await getDocs(query(collection(db, "haberler"), orderBy("tarih", "desc"), limit(40)));
+    const snap = await getDocs(query(collection(db, "haberler"), orderBy("tarih", "desc"), limit(150)));
     const mevcutLinkler = snap.docs.map(d => d.data().kaynak);
-    const sonHaberBasliklariDizisi = snap.docs.map(d => d.data().baslik) as string[];
 
-    const SITELER = [
-      "https://kocaelinabiz.com", "https://www.ozgurkocaeli.com.tr",
-      "https://www.cagdaskocaeli.com.tr", "https://www.kocaeligazetesi.com.tr"
-    ];
+    let tumAdaylar: any[] = [];
 
-    for (const site of SITELER) {
-      const linkler = await linkleriTopla(browser, site);
-      for (const haber of linkler) {
-        if (mevcutLinkler.includes(haber.link)) continue;
-        if (benzerlikVarMi(haber.baslik, sonHaberBasliklariDizisi)) continue;
+    try {
+      const { data } = await axios.get('https://www.cagdaskocaeli.com.tr/arsiv', { 
+        timeout: 10000,
+        headers: { 'User-Agent': 'Mozilla/5.0' }
+      });
+      const $ = cheerio.load(data);
+      $('h3').each((_, element) => {
+        const siteKategori = $(element).text().trim().toUpperCase();
+        if (YEREL_HEDEFLER.includes(siteKategori)) {
+          $(element).next('ul').find('li a').each((i, a) => {
+            if (i < 10) {
+              const href = $(a).attr('href');
+              const link = href?.startsWith('http') ? href : "https://www.cagdaskocaeli.com.tr" + href;
+              if (href && !mevcutLinkler.includes(link) && !link.includes('/video/') && !link.includes('/foto/')) {
+                tumAdaylar.push({ 
+                  link, 
+                  rssKategorisi: siteKategori, 
+                  kaynak: 'Çağdaş Kocaeli' 
+                });
+              }
+            }
+          });
+        }
+      });
+    } catch (e) { console.log("⚠️ Yerel tarama aksadı."); }
 
-        const ham = await habereSizVeCek(browser, haber.link);
-        // RESİM YOKSA KANKA: Senin logonu yedek olarak buraya koyacağız
-        const yedekResim = "https://haberpik.com/logo.png"; 
-        const haberResmi = ham?.resim || yedekResim;
-
-        const resimData = await resmiBase64Yap(haberResmi);
-        if (!resimData || !ham || ham.metin.length < 300) continue;
-
-        const prompt = `Haber editörü gibi davran. JSON formatında: {"baslik": "...", "ozet": "...", "icerik": "...", "kategoriler": ["..."], "durum": "aktif"}`;
-
-        try {
-          const result = await model.generateContent([prompt, ham.metin, resimData]);
-          const data = JSON.parse(result.response.text().match(/\{[\s\S]*\}/)?.[0] || "{}");
-
-          if (data.durum === "aktif") {
-            await addDoc(collection(db, "haberler"), { 
-              ...data,
-              resim: `data:${resimData.inlineData.mimeType};base64,${resimData.inlineData.data}`,
-              tarih: new Date(),
-              kaynak: haber.link,
-              yazar: "HaberPik Bot"
+    for (const rss of ULUSAL_RSS) {
+      try {
+        const feed = await parser.parseURL(rss.url);
+        feed.items.slice(0, 10).forEach(item => {
+          if (item.link && !mevcutLinkler.includes(item.link)) {
+            tumAdaylar.push({ 
+              link: item.link, 
+              rssKategorisi: rss.kat, 
+              kaynak: rss.kaynak 
             });
-            sayac++;
-            if (sayac >= 5) break; // Vercel timeout olmasın diye tek seferde 5 haber yeter kanka
           }
-        } catch (e) { console.log("⚠️ Gemini atladı."); }
-      }
-      if (sayac >= 5) break;
+        });
+      } catch (e) { console.log(`⚠️ ${rss.kaynak} RSS atlandı.`); }
     }
-    return NextResponse.json({ mesaj: "Bitti kanka!", eklenen: sayac });
-  } catch (e: any) { return NextResponse.json({ hata: e.message }); }
-  finally { if (browser) await (browser as any).close(); }
+
+    tumAdaylar = tumAdaylar.sort(() => Math.random() - 0.5);
+
+    for (const haber of tumAdaylar.slice(0, 15)) {
+      try {
+        const { data: html } = await axios.get(haber.link, { 
+          timeout: 10000,
+          headers: { 'User-Agent': 'Mozilla/5.0' }
+        });
+        const $d = cheerio.load(html);
+        const img = $d('meta[property="og:image"]').attr('content') || "https://haberpik.com/logo.png";
+        const text = $d('.haber_metni p, article p, .content p, .news-content p').map((_:any, p:any) => $d(p).text()).get().join('\n');
+
+        if (text.length > 200) {
+  const prompt = `Sen bir SEO uzmanısın. Aşağıdaki metinden özgün bir haber oluştur. 
+  JSON yapısı ŞU ŞEKİLDE OLSUN (BAŞKA METİN YAZMA):
+  {
+    "baslik": "haber başlığı",
+    "ozet": "kısa özet",
+    "icerik": "detaylı haber içeriği",
+    "seo_kelimeler": "anahtar kelime 1, anahtar kelime 2, anahtar kelime 3",
+    "meta_aciklama": "Google arama sonucu açıklaması",
+    "durum": "aktif"
+  }`;
+  
+  const result = await model.generateContent([prompt, text]);
+  const responseText = result.response.text();
+  const cleanData = JSON.parse(responseText.match(/\{[\s\S]*\}/)?.[0] || "{}");
+
+  if (cleanData.baslik) {
+    const finalKategoriler = kategoriEsle(haber.rssKategorisi, haber.kaynak, cleanData.baslik);
+            
+            const isAnaSlider = finalKategoriler.includes("ANASLIDER");
+            const isSporSlider = finalKategoriler.includes("SPOR");
+            const isTurkiyeSlider = finalKategoriler.includes("TÜRKİYE HABERLERİ");
+
+            await addDoc(collection(db, "haberler"), {
+      ...cleanData, // AI'dan gelen seo_kelimeler ve meta_aciklama burada içeri giriyor
+      kategoriler: finalKategoriler,
+      kategori: finalKategoriler[0],
+      
+      // GARANTİ MÜHÜRÜ: Eğer AI bazen alanı boş geçerse diye manuel zorlama
+      seo_kelimeler: cleanData.seo_kelimeler || cleanData.anahtar_kelimeler || "", 
+      meta_aciklama: cleanData.meta_aciklama || cleanData.ozet || "",
+
+      // ... (Diğer slider/tarih ayarların aynı kalsın) ...
+      mansetEkle: isAnaSlider || isSporSlider || isTurkiyeSlider,
+      sliderEkle: isAnaSlider || isSporSlider || isTurkiyeSlider,
+      resim: img,
+      kaynak: haber.link,
+      kaynak_ad: haber.kaynak,
+      tarih: new Date(),
+      yazar: "HaberPik Bot",
+      okunma: 0
+    });
+    console.log(`✅ SEO Dahil Eklendi: ${cleanData.baslik}`);
+    sayac++;
+  }
+}
+      } catch (err) { console.log(`❌ Hata: ${haber.link}`); }
+    }
+    return NextResponse.json({ mesaj: "HaberPik Operasyonu Başarılı!", eklenen: sayac });
+  } catch (e: any) {
+    return NextResponse.json({ hata: e.message });
+  }
 }

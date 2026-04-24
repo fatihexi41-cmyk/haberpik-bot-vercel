@@ -275,14 +275,23 @@ export async function GET() {
     ]);
 
     const [hava, kurlar, filmler, namaz] = await Promise.allSettled([
-      axios.get(`https://api.openweathermap.org/data/2.5/weather?q=Kocaeli&units=metric&lang=tr&appid=8f27806f155940c6a394f4a36f4f2c0b`),
-      axios.get(`https://api.exchangerate-api.com/v4/latest/TRY`),
+      axios.get(`https://api.openweathermap.org/data/2.5/weather?q=Kocaeli&units=metric&lang=tr&appid=3621d987bf248bae5c97fe8de5758005`),      axios.get(`https://api.exchangerate-api.com/v4/latest/TRY`),
       axios.get(`https://api.themoviedb.org/3/movie/now_playing?api_key=${tmdbKey}&language=tr-TR&page=1`),
       axios.get(`https://api.aladhan.com/v1/timingsByCity?city=Kocaeli&country=Turkey&method=13`)
     ]);
 
     // Verileri paketleme (Buralar zaten sende okey kanka)
-    if (hava.status === 'fulfilled') hizmetVerisi.hava = { derece: Math.round(hava.value.data.main.temp), durum: hava.value.data.weather[0].description.toUpperCase(), ikon: hava.value.data.weather[0].icon };
+if (hava.status === 'fulfilled' && hava.value.data) {
+  hizmetVerisi.hava = { 
+    derece: Math.round(hava.value.data.main.temp), 
+    durum: hava.value.data.weather[0].description.toUpperCase(), 
+    // Kanka ikonun gelmesi için linki böyle mühürle:
+    ikon: `https://openweathermap.org/img/wn/${hava.value.data.weather[0].icon}@2x.png` 
+  };
+} else {
+  console.log("⚠️ Hava durumu verisi çekilemedi.");
+  hizmetVerisi.hava = { derece: 0, durum: "VERİ ALINAMADI", ikon: "" };
+}   
     if (kurlar.status === 'fulfilled') hizmetVerisi.kurlar = { dolar: (1 / kurlar.value.data.rates.USD).toFixed(2), euro: (1 / kurlar.value.data.rates.EUR).toFixed(2) };
     if (filmler.status === 'fulfilled') hizmetVerisi.filmler = filmler.value.data.results.slice(0, 10).map((f: any) => ({ baslik: f.title, resim: `https://image.tmdb.org/t/p/w500${f.poster_path}`, puan: f.vote_average }));
     if (namaz.status === 'fulfilled') { hizmetVerisi.namaz = namaz.value.data.data.timings; hizmetVerisi.hicri_tarih = namaz.value.data.data.date.hijri; }
