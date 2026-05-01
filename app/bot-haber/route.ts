@@ -13,39 +13,52 @@ const kategoriEsle = (anaKategori: string, kaynak: string, baslik: string = "") 
   const k = (anaKategori + " " + baslik).toUpperCase();
   let katlar: string[] = [];
   
-  // 1. KOCAELİ KUTSAL BÖLGESİ (Sadece Çağdaş Kocaeli sızabilir)
+  // 1. KOCAELİ KUTSAL BÖLGESİ (ANASLIDER ve GÜNDEM ÖZETİ BURASI)
   if (kaynak === 'Çağdaş Kocaeli') {
+    // Kocaeli haberleri sadece GÜNDEM ve ANASLIDER'a gidebilir
     katlar.push('GÜNDEM'); 
-    katlar.push('ANASLIDER'); // En üstteki Kocaeli Slider'ı sadece yerel olur
+    katlar.push('ANASLIDER'); 
 
-    // Yerel Spor Ayrımı: Sütunlara gider
-    if (k.includes('SPOR') || k.includes('KOCAELİSPOR')) {
-      katlar.push('YEREL SPOR');
-    }
-    // Yerel Yaşam -> Hayatın İçinden
-    if (k.includes('YAŞAM') || k.includes('MAGAZİN')) {
-      katlar.push('HAYATIN İÇİNDEN');
-    }
-  } else {
-    // 2. ULUSAL BÖLGE (RSS Kaynağına Sadakat)
-    // RSS'den ne gelirse o havuza düşer
+    // Yerel Özel Alt Kategori Taraması
+    if (k.includes('SPOR') || k.includes('KOCAELİSPOR')) katlar.push('YEREL SPOR');
+    if (k.includes('ASAYİŞ')) katlar.push('ASAYİŞ');
+    if (k.includes('SİYASET')) katlar.push('SİYASET');
+    if (k.includes('YAŞAM') || k.includes('MAGAZİN')) katlar.push('HAYATIN İÇİNDEN');
+  } 
+  
+  // 2. ULUSAL BÖLGE (TÜRKİYE, DÜNYA, SPOR, EKONOMİ SLIDERLARI)
+  else {
     const rssKat = anaKategori.toUpperCase().trim();
-    katlar.push(rssKat === 'TÜRKİYE' ? 'TÜRKİYE HABERLERİ' : rssKat);
+    
+    // RSS'den gelen kategoriye göre net yerleştirme
+    if (rssKat === 'SPOR') {
+      katlar.push('SPOR'); // Ulusal Spor Slider'ı ve Kategorisi
+    } else if (rssKat === 'DÜNYA') {
+      katlar.push('DÜNYA'); // Dünya Slider'ı ve Kategorisi
+    } else if (rssKat === 'EKONOMİ') {
+      katlar.push('EKONOMİ'); // Ekonomi Slider'ı ve Kategorisi
+    } else if (rssKat === 'SİYASET') {
+      katlar.push('SİYASET');
+    } else if (rssKat === 'ASAYİŞ') {
+      katlar.push('ASAYİŞ');
+    } else if (rssKat === 'TÜRKİYE' || rssKat === 'TÜRKİYE HABERLERİ') {
+      katlar.push('TÜRKİYE HABERLERİ'); // Türkiye Slider'ı ve Kategorisi
+    } else {
+      // Magazin, Teknoloji vb. diğer ulusal dallar
+      katlar.push(rssKat);
+    }
   }
 
-  // 3. İSTİSNAİ ÇOKLU KATEGORİ (Sadece Türkiye Haberleri veya Gündem içinden süzülür)
-  // Bir haber Türkiye Haberi veya Gündem olsa bile içinde özel konu varsa oraya da kopyalanır
-  if (katlar.includes('TÜRKİYE HABERLERİ') || katlar.includes('GÜNDEM')) {
-    if (k.includes('OTOMOBİL') || k.includes('ARABA') || k.includes('TOGG')) katlar.push('OTOMOBİL');
-    if (k.includes('SAĞLIK') || k.includes('HASTANE') || k.includes('DOKTOR')) katlar.push('SAĞLIK');
-    if (k.includes('EĞİTİM') || k.includes('OKUL') || k.includes('SINAV')) katlar.push('EĞİTİM');
-    if (k.includes('EMLAK') || k.includes('KONUT') || k.includes('TOKİ')) katlar.push('EMLAK');
-    if (k.includes('EKONOMİ') || k.includes('BORSA') || k.includes('ALTIN')) katlar.push('EKONOMİ');
-  }
+  // 3. İSTİSNAİ ÇOKLU KATEGORİ (Arama terimlerine göre her iki gruptan da süzülebilir)
+  // Bu kısım haberin menüdeki özel sayfalarda da çıkmasını sağlar
+  if (k.includes('OTOMOBİL') || k.includes('ARABA')) katlar.push('OTOMOBİL');
+  if (k.includes('SAĞLIK') || k.includes('HASTANE')) katlar.push('SAĞLIK');
+  if (k.includes('EĞİTİM') || k.includes('OKUL')) katlar.push('EĞİTİM');
+  if (k.includes('EMLAK') || k.includes('TOKİ')) katlar.push('EMLAK');
 
-  // 4. SPOR DİSİPLİNİ: Ulusal Spor asla Türkiye Haberleri'ne sızmaz, sadece kendi Slider'ına gider.
-  if (katlar.includes('SPOR')) {
-    return ['SPOR']; // Spor haberi sadece spordur kanka
+  // Boşta kalma ihtimaline karşı sigorta
+  if (katlar.length === 0) {
+    katlar.push(kaynak === 'Çağdaş Kocaeli' ? 'GÜNDEM' : 'TÜRKİYE HABERLERİ');
   }
 
   return [...new Set(katlar)]; 
@@ -149,34 +162,52 @@ export async function GET() {
   const cleanData = JSON.parse(responseText.match(/\{[\s\S]*\}/)?.[0] || "{}");
 
   if (cleanData.baslik) {
-    const finalKategoriler = kategoriEsle(haber.rssKategorisi, haber.kaynak, cleanData.baslik);
-            
-            const isAnaSlider = finalKategoriler.includes("ANASLIDER");
-            const isSporSlider = finalKategoriler.includes("SPOR");
-            const isTurkiyeSlider = finalKategoriler.includes("TÜRKİYE HABERLERİ");
+  const finalKategoriler = kategoriEsle(haber.rssKategorisi, haber.kaynak, cleanData.baslik);
+  
+  // --- SLIDER VE VİTRİN KONTROLLERİ (Yeni Kategori Sihirbazına Tam Uyumlu) ---
+  
+  // 1. Ana Slider: Sadece Kocaeli (ANASLIDER) haberleri girer
+  const isAnaSlider = finalKategoriler.includes("ANASLIDER");
+  
+  // 2. Spor Slider: Sadece Ulusal Spor (SPOR) haberleri girer
+  const isSporSlider = finalKategoriler.includes("SPOR");
+  
+  // 3. Dörtlü Alt Sliderlar: Türkiye, Dünya, Siyaset, Asayiş
+  const isTurkiyeSlider = finalKategoriler.includes("TÜRKİYE HABERLERİ");
+  const isDunyaSlider = finalKategoriler.includes("DÜNYA");
+  const isSiyasetSlider = finalKategoriler.includes("SİYASET");
+  const isAsayisSlider = finalKategoriler.includes("ASAYİŞ");
 
-            await addDoc(collection(db, "haberler"), {
-      ...cleanData, // AI'dan gelen seo_kelimeler ve meta_aciklama burada içeri giriyor
-      kategoriler: finalKategoriler,
-      kategori: finalKategoriler[0],
-      
-      // GARANTİ MÜHÜRÜ: Eğer AI bazen alanı boş geçerse diye manuel zorlama
-      seo_kelimeler: cleanData.seo_kelimeler || cleanData.anahtar_kelimeler || "", 
-      meta_aciklama: cleanData.meta_aciklama || cleanData.ozet || "",
+  // Haber bu kategorilerden herhangi birine sahipse slider listesine girsin kanka
+  const girmeliMi = isAnaSlider || isSporSlider || isTurkiyeSlider || isDunyaSlider || isSiyasetSlider || isAsayisSlider;
 
-      // ... (Diğer slider/tarih ayarların aynı kalsın) ...
-      mansetEkle: isAnaSlider || isSporSlider || isTurkiyeSlider,
-      sliderEkle: isAnaSlider || isSporSlider || isTurkiyeSlider,
-      resim: img,
-      kaynak: haber.link,
-      kaynak_ad: haber.kaynak,
-      tarih: new Date(),
-      yazar: "HaberPik Bot",
-      okunma: 0
-    });
-    console.log(`✅ SEO Dahil Eklendi: ${cleanData.baslik}`);
-    sayac++;
-  }
+  await addDoc(collection(db, "haberler"), {
+    ...cleanData, 
+    kategoriler: finalKategoriler,
+    kategori: finalKategoriler[0] || (haber.kaynak === 'Çağdaş Kocaeli' ? 'GÜNDEM' : 'TÜRKİYE HABERLERİ'),
+    
+    // SEO ve Meta Verileri (Boş gelirse özetle dolduruyoruz)
+    seo_kelimeler: cleanData.seo_kelimeler || cleanData.anahtar_kelimeler || "", 
+    meta_aciklama: cleanData.meta_aciklama || cleanData.ozet || "",
+
+    // --- VİTRİN MÜHÜRLERİ ---
+    mansetEkle: girmeliMi,
+    sliderEkle: girmeliMi,
+    
+    // Dörtlü yapı ve Gündem Özeti için frontend'in baktığı ekstra bayraklar (isteğe bağlı)
+    isGundemOzet: finalKategoriler.includes("GÜNDEM"), // Kocaeli Gündem Özeti için
+    
+    resim: img,
+    kaynak: haber.link,
+    kaynak_ad: haber.kaynak,
+    tarih: new Date(),
+    yazar: "HaberPik Bot",
+    okunma: 0
+  });
+
+  console.log(`✅ SEO Dahil Eklendi: ${cleanData.baslik} [${finalKategoriler.join(", ")}]`);
+  sayac++;
+}
 }
       } catch (err) { console.log(`❌ Hata: ${haber.link}`); }
     }
