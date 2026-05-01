@@ -79,13 +79,27 @@ for (const item of feed.items) {
     3. "mansetEkle", "trendEkle", "sonDakika": Haberin değerine göre (Çok önemliyse) true yap.
     4. "sliderEkle": BU KRİTİK! Eğer kategori "SPOR" veya "YEREL SPOR" DEĞİLSE bunu MUTLAKA true yap. Spor haberlerinde sadece çok büyük olaylarda true yap.
     5. "anaSayfaDuzen": Haber yerelse "KOCAELİ_BOLUMU", spor ise "SPORPIK_SLIDER", diğerleri "ANA_SLIDER" yap.
-
+    6. "resimOnay": Haberin orijinal resmini (varsa) incele. Eğer üzerinde CNN, A Haber, İHA, özgün kocaeli gibi başka sitelerin logoları, büyük filigranları veya kurumsal mühürleri varsa false, resim temizse true dön.
     JSON formatı: { "baslik": "...", "ozet": "...", "icerik": "...", "kategoriler": [], "anaSayfaDuzen": "...", "sonDakika": false, "sliderEkle": false, "trendEkle": false, "mansetEkle": false, "seo_kelimeler": "...", "meta_aciklama": "..." }`;
 
                 const result = await model.generateContent(prompt);
                 const resText = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
                 // --- 2. CERRAHİ DOKUNUŞ: AKILLI MÜHÜRLEME SİSTEMİ ---
 const ai = JSON.parse(resText);
+
+// --- YERELLİK SÜZGECİ: Ulusal haberlerin Kocaeli'ye sızmasını engeller ---
+if (source.type === 'ULUSAL' || source.type === 'SON_DAKIKA') {
+    // Kanka, eğer kaynak ulusalsa kategorilerden Kocaeli ile ilgili olanları ayıklıyoruz
+    ai.kategoriler = ai.kategoriler.filter(k => 
+        !k.toUpperCase('tr-TR').includes("KOCAELİ") && 
+        !k.toUpperCase('tr-TR').includes("YEREL")
+    );
+    
+    // Eğer Gemini anaSayfaDuzen'i yanlışlıkla yerel bölüme attıysa düzeltiyoruz
+    if (ai.anaSayfaDuzen === "KOCAELİ_BOLUMU") {
+        ai.anaSayfaDuzen = "ANA_SLIDER";
+    }
+}
 
 const mühür = {
     baslik: ai.baslik || item.title,
@@ -94,25 +108,39 @@ const mühür = {
     // --- RESİM DEDEKTÖRÜ VE VARSAYILAN LOGO MÜHÜRÜ ---
 // --- RESİM DEDEKTÖRÜ: GARANTİCİ VE MÜHÜRLÜ VERSİYON ---
 resim: (() => {
-    // 1. RSS alanlarını tara
-    let img = item.image || item.enclosure?.url || item['media:content']?.url;
+    // 1. RSS Standart Alanlarını Daha Geniş Tara
+    let img = item.image || 
+              item.enclosure?.url || 
+              item['media:content']?.url || 
+              item['media:content']?.$?.url; 
     
-    // 2. Eğer resim linki placeholder ise veya boşsa onu "yok" say
-    if (!img || typeof img !== 'string' || img.includes('placeholder')) {
+    // 2. Geçersiz Linkleri ve Placeholder'ları Temizle
+    if (!img || typeof img !== 'string' || img.includes('placeholder') || img.includes('pixel.gif')) {
         img = null;
     }
 
-    // 3. RSS'de yoksa Regex ile içeriği tara
+    // 3. RSS'de Yoksa İçerik ve Açıklamayı Derinlemesine Tara (Regex)
     if (!img) {
-        const regexMatch = (item.content + item.description).match(/src="([^"]+)"/);
+        const contentStr = (item.content || "") + " " + (item.description || "") + " " + (item['content:encoded'] || "");
+        const regexMatch = contentStr.match(/<img[^>]+src="([^">]+)"/i);
+        
         if (regexMatch && regexMatch[1] && !regexMatch[1].includes('placeholder')) {
             img = regexMatch[1];
         }
     }
 
-    // 4. SON KALE: Eğer hala img null ise senin logoları çak
+    // --- KANKA: İŞTE BURASI YENİ EKLEDİĞİMİZ CERRAHİ DOKUNUŞ ---
+    // Eğer Gemini "Bu resimde logo var" (resimOnay: false) dediyse, 
+    // link bulsak bile onu siliyoruz ki aşağıda "SON KALE" devreye girsin.
+    if (ai.resimOnay === false) {
+        img = null;
+    }
+    // -------------------------------------------------------
+
+    // 4. SON KALE: Eğer hala resim yoksa (veya logo nedeniyle sildiysek) senin logoları çak
     if (!img) {
-        if (source.type === 'SON_DAKIKA' || source.kat.toUpperCase().includes("SON DAKİKA")) {
+        const isSonDakika = source.type === 'SON_DAKIKA' || source.kat.toUpperCase('tr-TR').includes("SON DAKİKA");
+        if (isSonDakika) {
             return "https://firebasestorage.googleapis.com/v0/b/kocaelihaber-e779e.firebasestorage.app/o/son%20dakika.png?alt=media&token=4c12d38a-96a5-4c60-b355-8176c2be9f99";
         } else {
             return "https://firebasestorage.googleapis.com/v0/b/kocaelihaber-e779e.firebasestorage.app/o/resimsiz%20haberlericin.png?alt=media&token=be1f8d44-e0ea-4097-b4c5-4a2490086ac6";
