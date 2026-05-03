@@ -80,6 +80,7 @@ for (const item of feed.items) {
     4. "sliderEkle": BU KRİTİK! Eğer kategori "SPOR" veya "YEREL SPOR" DEĞİLSE bunu MUTLAKA true yap. Spor haberlerinde sadece çok büyük olaylarda true yap.
     5. "anaSayfaDuzen": Haber yerelse "KOCAELİ_BOLUMU", spor ise "SPORPIK_SLIDER", diğerleri "ANA_SLIDER" yap.
     6. "resimOnay": Haberin orijinal resmini (varsa) incele. Eğer üzerinde CNN, A Haber, İHA, özgün kocaeli gibi başka sitelerin logoları, büyük filigranları veya kurumsal mühürleri varsa false, resim temizse true dön.
+    7. "sonDakika" ve "sliderEkle" Kuralı: Bir haber "sonDakika": true ise, "sliderEkle" değeri istisnasız false olmalıdır. Son dakika haberlerini hiçbir slidere dahil etme.
     JSON formatı: { "baslik": "...", "ozet": "...", "icerik": "...", "kategoriler": [], "anaSayfaDuzen": "...", "sonDakika": false, "sliderEkle": false, "trendEkle": false, "mansetEkle": false, "seo_kelimeler": "...", "meta_aciklama": "..." }`;
 
                 const result = await model.generateContent(prompt);
