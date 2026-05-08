@@ -235,19 +235,29 @@ async function tumHizmetleriGuncelle() {
         ikon: `https://openweathermap.org/img/wn/${havaRes.value.data.weather[0].icon}@2x.png`
       };
     }
-    if (namazRes.status === 'fulfilled' && namazRes.value.data && namazRes.value.data.data) {
-      // Kanka, sadece vakitlerin olduğu temiz objeyi alıyoruz
-      const vakitler = namazRes.value.data.data.timings;
-      
-      // Firebase'in kızmaması için objeyi sadeleştiriyoruz
-      hizmetVerisi.namaz = {
-        Imsak: vakitler.Imsak,
-        Gunes: vakitler.Sunrise,
-        Ogle: vakitler.Dhuhr,
-        Ikindi: vakitler.Asr,
-        Aksam: vakitler.Maghrib,
-        Yatsi: vakitler.Isha
-      };
+    // --- NAMAZ VAKİTLERİ (GÜVENLİ MÜHÜRLEME) ---
+    if (namazRes.status === 'fulfilled' && namazRes.value && namazRes.value.data && namazRes.value.data.data) {
+      try {
+        const t = namazRes.value.data.data.timings;
+        
+        // Kanka sadece lazım olanları, Firebase'in sevdiği isimlerle alıyoruz
+        hizmetVerisi.namaz = {
+          Imsak: t.Imsak || "00:00",
+          Gunes: t.Sunrise || "00:00",
+          Ogle: t.Dhuhr || "00:00",
+          Ikindi: t.Asr || "00:00",
+          Aksam: t.Maghrib || "00:00",
+          Yatsi: t.Isha || "00:00"
+        };
+        
+        // Hicri tarih de Firebase'i bozabiliyor, onu da kontrol altına alalım
+        if (namazRes.value.data.data.date && namazRes.value.data.data.date.hijri) {
+          const h = namazRes.value.data.data.date.hijri;
+          hizmetVerisi.hicri_tarih = `${h.day} ${h.month.tr || h.month.en} ${h.year}`;
+        }
+      } catch (err) {
+        console.log("⚠️ Namaz verisi paketlenirken hata oluştu, pas geçiliyor.");
+      }
     }
 
     await setDoc(doc(db, "ayarlar", "hizmetler"), hizmetVerisi, { merge: true });
