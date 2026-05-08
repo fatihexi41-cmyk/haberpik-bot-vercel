@@ -235,12 +235,10 @@ async function tumHizmetleriGuncelle() {
         ikon: `https://openweathermap.org/img/wn/${havaRes.value.data.weather[0].icon}@2x.png`
       };
     }
-    // --- NAMAZ VAKİTLERİ (GÜVENLİ MÜHÜRLEME) ---
+
     if (namazRes.status === 'fulfilled' && namazRes.value && namazRes.value.data && namazRes.value.data.data) {
       try {
         const t = namazRes.value.data.data.timings;
-        
-        // Kanka sadece lazım olanları, Firebase'in sevdiği isimlerle alıyoruz
         hizmetVerisi.namaz = {
           Imsak: t.Imsak || "00:00",
           Gunes: t.Sunrise || "00:00",
@@ -249,14 +247,13 @@ async function tumHizmetleriGuncelle() {
           Aksam: t.Maghrib || "00:00",
           Yatsi: t.Isha || "00:00"
         };
-        
-        // Hicri tarih de Firebase'i bozabiliyor, onu da kontrol altına alalım
         if (namazRes.value.data.data.date && namazRes.value.data.data.date.hijri) {
           const h = namazRes.value.data.data.date.hijri;
-          hizmetVerisi.hicri_tarih = `${h.day} ${h.month.tr || h.month.en} ${h.year}`;
+          const ayIsmi = (h.month && h.month.tr) ? h.month.tr : (h.month.en || "");
+          hizmetVerisi.hicri_tarih = `${h.day} ${ayIsmi} ${h.year}`;
         }
       } catch (err) {
-        console.log("⚠️ Namaz verisi paketlenirken hata oluştu, pas geçiliyor.");
+        console.log("⚠️ Namaz verisi paketlenemedi, pas geçildi.");
       }
     }
 
