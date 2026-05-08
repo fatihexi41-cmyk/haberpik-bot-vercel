@@ -235,8 +235,19 @@ async function tumHizmetleriGuncelle() {
         ikon: `https://openweathermap.org/img/wn/${havaRes.value.data.weather[0].icon}@2x.png`
       };
     }
-    if (namazRes.status === 'fulfilled') {
-      hizmetVerisi.namaz = namazRes.value.data.data.timings;
+    if (namazRes.status === 'fulfilled' && namazRes.value.data && namazRes.value.data.data) {
+      // Kanka, sadece vakitlerin olduğu temiz objeyi alıyoruz
+      const vakitler = namazRes.value.data.data.timings;
+      
+      // Firebase'in kızmaması için objeyi sadeleştiriyoruz
+      hizmetVerisi.namaz = {
+        Imsak: vakitler.Imsak,
+        Gunes: vakitler.Sunrise,
+        Ogle: vakitler.Dhuhr,
+        Ikindi: vakitler.Asr,
+        Aksam: vakitler.Maghrib,
+        Yatsi: vakitler.Isha
+      };
     }
 
     await setDoc(doc(db, "ayarlar", "hizmetler"), hizmetVerisi, { merge: true });
