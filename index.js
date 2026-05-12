@@ -76,27 +76,23 @@ for (const item of feed.items) {
     KURALLAR:
     1. "icerik": Haberi en az 4-5 paragraflık, profesyonel ve detaylı bir dille YENİDEN YAZ.
     2. "kategoriler": RSS'ten gelen "${source.kat}" kategorisini ana kategori al, yanına uygun 1-2 tane daha ekle.
-    3. "mansetEkle", "trendEkle", "sonDakika": Haberin değerine göre (Çok önemliyse) true yap.
-    4. "sliderEkle": BU KRİTİK! Eğer kategori "SPOR" veya "YEREL SPOR" DEĞİLSE bunu MUTLAKA true yap. Spor haberlerinde sadece çok büyük olaylarda true yap.
-    5. "anaSayfaDuzen": Haber yerelse "KOCAELİ_BOLUMU", spor ise "SPORPIK_SLIDER", diğerleri "ANA_SLIDER" yap.
-    6. "resimOnay": Haberin orijinal resmini (varsa) incele. Eğer üzerinde CNN, A Haber, İHA, özgün kocaeli gibi başka sitelerin logoları, büyük filigranları veya kurumsal mühürleri varsa false, resim temizse true dön.
-    7. "sonDakika" ve "sliderEkle" Kuralı: Bir haber "sonDakika": true ise, "sliderEkle" değeri istisnasız false olmalıdır. Son dakika haberlerini hiçbir slidere dahil etme.
+    3. "sliderEkle": KATEGORİ "${source.kat}" == "SON DAKİKA" veya "TÜRKİYE HABERLERİ" ise MUTLAKA false yap.
+    4. "anaSayfaDuzen": Haber yerelse "KOCAELİ_BOLUMU", spor ise "SPORPIK_SLIDER", diğerleri "ANA_SLIDER" yap.
+    5. "resimOnay": Resim temizse true, logo/reklam varsa false dön.
     JSON formatı: { "baslik": "...", "ozet": "...", "icerik": "...", "kategoriler": [], "anaSayfaDuzen": "...", "sonDakika": false, "sliderEkle": false, "trendEkle": false, "mansetEkle": false, "seo_kelimeler": "...", "meta_aciklama": "..." }`;
 
-                const result = await model.generateContent(prompt);
-                const resText = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+
+    const result = await model.generateContent(prompt);
+    const resText = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
                 // --- 2. CERRAHİ DOKUNUŞ: AKILLI MÜHÜRLEME SİSTEMİ ---
-const ai = JSON.parse(resText);
+    const ai = JSON.parse(resText);
 
 // --- YERELLİK SÜZGECİ: Ulusal haberlerin Kocaeli'ye sızmasını engeller ---
 if (source.type === 'ULUSAL' || source.type === 'SON_DAKIKA') {
-    // Kanka, eğer kaynak ulusalsa kategorilerden Kocaeli ile ilgili olanları ayıklıyoruz
     ai.kategoriler = ai.kategoriler.filter(k => 
         !k.toUpperCase('tr-TR').includes("KOCAELİ") && 
         !k.toUpperCase('tr-TR').includes("YEREL")
     );
-    
-    // Eğer Gemini anaSayfaDuzen'i yanlışlıkla yerel bölüme attıysa düzeltiyoruz
     if (ai.anaSayfaDuzen === "KOCAELİ_BOLUMU") {
         ai.anaSayfaDuzen = "ANA_SLIDER";
     }
@@ -155,10 +151,12 @@ resim: (() => {
     kategoriler: Array.isArray(ai.kategoriler) ? ai.kategoriler.map(k => k.toUpperCase('tr-TR')) : [source.kat.toUpperCase('tr-TR')],
     kategori: source.kat.toUpperCase('tr-TR'),
     
-    // KANKA: Senin "Spor Hariç Slider Olsun" kuralını mühürledik
-    sliderEkle: (source.kat.toUpperCase('tr-TR').includes("SPOR")) 
-        ? Boolean(ai.sliderEkle) // Sporsa Gemini karar versin
-        : true, // Spor değilse (Siyaset, Ekonomi vb.) YAPIŞTIR Slider'a
+    // KANKA: Kesin slider yasağı mühürü
+    sliderEkle: (source.kat === 'SON DAKİKA' || source.kat === 'TÜRKİYE HABERLERİ' || ai.sonDakika === true) 
+        ? false 
+        : (source.kat.toUpperCase('tr-TR').includes("SPOR")) 
+            ? Boolean(ai.sliderEkle) 
+            : true,
 
     // Gemini'nin editoryal kararları
     mansetEkle: Boolean(ai.mansetEkle), 

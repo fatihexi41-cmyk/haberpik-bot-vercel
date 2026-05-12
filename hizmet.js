@@ -32,51 +32,54 @@ async function getBrowser() {
 
 // --- 2. NTV SPOR KAZIYICI ---
 async function futbolKaziyici() {
+  console.log("⚽ Futbol Motoru çalıştırılıyor...");
   let browser = null;
   try {
     browser = await getBrowser();
     const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
     await page.setViewport({ width: 1366, height: 2000 });
 
     // 1. ADIM: PUAN DURUMU
-    await page.goto('https://www.ntvspor.net/futbol/lig/super-lig/puan-durumu', { waitUntil: 'networkidle2' });
+    await page.goto('https://www.ntvspor.net/futbol/lig/super-lig/puan-durumu', { waitUntil: 'networkidle2', timeout: 90000 });
     
     await page.evaluate(() => {
       const selectors = ['.ad-container', 'iframe', '.overlay', '.modal', '#onetrust-consent-sdk'];
       selectors.forEach(s => document.querySelectorAll(s).forEach(el => el.remove()));
     });
     
-    await page.evaluate(() => window.scrollBy(0, 500));
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 4000));
 
     const puanlar = await page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll('table tbody tr'));
+      const rows = Array.from(document.querySelectorAll('table tbody tr')); 
+      
       return rows.map(row => {
-        const c = Array.from(row.querySelectorAll('td'));
-        const teamName = c[2]?.innerText?.trim();
-        if (!teamName || teamName.length < 2) return null;
+        const c = Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim());
+        
+        // KANKA: NTV Spor'da genelde: 
+        // c[0]=Sıra, c[1]=Logo/Boş, c[2]=Takım Adı, c[3]=Oynanan...
+        // Eğer c[2] ve c[3] aynıysa (mükerrer isim varsa) sütunları kaydırıyoruz.
+        
+        let teamName = c[2] || "";
+        let offset = 0;
+
+        // Eğer takım adı c[1]'de kalmışsa veya c[2] ile c[3] aynıysa temizlik yap:
+        if (c[2] === c[1]) { offset = -1; } 
+
         return {
           team: { name: teamName },
-          played: c[3]?.innerText?.trim() || "0",
-          won: c[4]?.innerText?.trim() || "0",
-          draw: c[5]?.innerText?.trim() || "0",
-          lost: c[6]?.innerText?.trim() || "0",
-          points: c[10]?.innerText?.trim() || "0"
+          played: c[3 + offset] || "0",
+          won: c[4 + offset] || "0",
+          draw: c[5 + offset] || "0",
+          lost: c[6 + offset] || "0",
+          points: c[10 + offset] || "0" // Puan genelde 10. sütunda
         };
-      }).filter(i => i !== null);
+      }).filter(i => i && i.team.name.length > 2).slice(0, 20);
     });
 
     // 2. ADIM: FİKSTÜR
-    await page.goto('https://www.ntvspor.net/futbol/lig/super-lig/fikstur', { waitUntil: 'networkidle2' });
-    
-    await page.evaluate(() => {
-      const blockers = ['#onetrust-banner-sdk', '.secondary-nav', 'header'];
-      blockers.forEach(s => document.querySelectorAll(s).forEach(el => el.remove()));
-      document.body.style.overflow = 'auto';
-    });
-
-    await page.evaluate(() => window.scrollBy(0, 800));
-    await new Promise(r => setTimeout(r, 3000));
+    await page.goto('https://www.ntvspor.net/futbol/lig/super-lig/fikstur', { waitUntil: 'networkidle2', timeout: 90000 });    
+    await new Promise(r => setTimeout(r, 4000));
 
     const fikstur = await page.evaluate(() => {
       const rows = Array.from(document.querySelectorAll('table tbody tr'));
@@ -122,6 +125,7 @@ async function futbolKaziyici() {
 
 // --- 3. GAZETE MANŞETLERİ ---
 async function mansetCekici() {
+  console.log("📰 Gazete Manşetleri çekiliyor...");
   let browser = null;
   try {
     browser = await getBrowser();
@@ -140,10 +144,8 @@ async function mansetCekici() {
       try {
         await page.goto(`https://www.haber7.com/gazete-mansetleri/${g.slug}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
         const imgUrl = await page.evaluate(() => {
-          const img = document.querySelector('.newspaper-detail img') || 
-                      document.querySelector('.newspaper-pages img') ||
-                      document.querySelector('.newspaper-all img');
-          return img ? (img.src || img.getAttribute('data-src') || img.getAttribute('srcset')?.split(' ')[0]) : null;
+          const img = document.querySelector('.newspaper-detail img, .newspaper-pages img, .newspaper-all img, .slug-img img, .gallery-item img');
+          return img ? (img.src || img.getAttribute('data-src')) : null;
         });
         if (imgUrl) {
           const cleanUrl = imgUrl.startsWith('//') ? 'https:' + imgUrl : imgUrl;
@@ -161,6 +163,7 @@ async function mansetCekici() {
 
 // --- 3.5. TMDB FİLM VERİLERİ ---
 async function filmleriCek() {
+  console.log("🎬 Filmler çekiliyor...");
   try {
     const tmdbKey = process.env.TMDB_API_KEY;
     if (!tmdbKey) return [];
@@ -178,6 +181,7 @@ async function filmleriCek() {
 
 // --- 4. ETKİNLİK.IO API ---
 async function haberPikEtkinlikCek() {
+  console.log("📅 Etkinlikler çekiliyor...");
   try {
     const token = "7064bc9e06d013150e9f3f8512983a9e";
     const res = await axios.get("https://etkinlik.io/api/v2/events", {
@@ -201,9 +205,11 @@ async function haberPikEtkinlikCek() {
 // --- 5. ANA MOTOR ---
 async function tumHizmetleriGuncelle() {
   console.log(`🚀 [${new Date().toLocaleTimeString()}] Operasyon Başladı...`);
+
   const hizmetVerisi = { son_guncelleme: new Date().toISOString(), durum: "aktif" };
 
   try {
+    // KANKA: await koyduk ki beklemeden geçmesin!
     const [futbol, mansetler, etkinlikler, filmler] = await Promise.all([
       futbolKaziyici(),
       mansetCekici(),
@@ -212,8 +218,8 @@ async function tumHizmetleriGuncelle() {
     ]);
 
     const [havaRes, namazRes] = await Promise.allSettled([
-      axios.get(`https://api.openweathermap.org/data/2.5/weather?q=Kocaeli&units=metric&lang=tr&appid=3621d987bf248bae5c97fe8de5758005`),
-      axios.get(`https://api.aladhan.com/v1/timingsByCity?city=Kocaeli&country=Turkey&method=13`)
+      axios.get(`https://api.openweathermap.org/data/2.5/weather?q=Darica,TR&units=metric&lang=tr&appid=3621d987bf248bae5c97fe8de5758005`),
+      axios.get(`https://api.aladhan.com/v1/timingsByCity?city=Darica&country=Turkey&method=13`)
     ]);
 
     if (futbol) {
@@ -231,29 +237,29 @@ async function tumHizmetleriGuncelle() {
     if (havaRes.status === 'fulfilled') {
       hizmetVerisi.hava = { 
         derece: Math.round(havaRes.value.data.main.temp), 
-        durum: havaRes.value.data.weather[0].description.toUpperCase(),
+        durum: havaRes.value.data.weather[0].description.toUpperCase('tr-TR'),
         ikon: `https://openweathermap.org/img/wn/${havaRes.value.data.weather[0].icon}@2x.png`
       };
     }
 
-    if (namazRes.status === 'fulfilled' && namazRes.value && namazRes.value.data && namazRes.value.data.data) {
+    if (namazRes.status === 'fulfilled' && namazRes.value.data?.data) {
       try {
         const t = namazRes.value.data.data.timings;
         hizmetVerisi.namaz = {
-          Imsak: t.Imsak || "00:00",
-          Gunes: t.Sunrise || "00:00",
-          Ogle: t.Dhuhr || "00:00",
-          Ikindi: t.Asr || "00:00",
-          Aksam: t.Maghrib || "00:00",
-          Yatsi: t.Isha || "00:00"
+          imsak: t.Imsak || "00:00",
+          gunes: t.Sunrise || "00:00",
+          ogle: t.Dhuhr || "00:00",
+          ikindi: t.Asr || "00:00",
+          aksam: t.Maghrib || "00:00",
+          yatsi: t.Isha || "00:00"
         };
-        if (namazRes.value.data.data.date && namazRes.value.data.data.date.hijri) {
+        
+        if (namazRes.value.data.data.date?.hijri) {
           const h = namazRes.value.data.data.date.hijri;
-          const ayIsmi = (h.month && h.month.tr) ? h.month.tr : (h.month.en || "");
-          hizmetVerisi.hicri_tarih = `${h.day} ${ayIsmi} ${h.year}`;
+          hizmetVerisi.hicri_tarih = `${h.day} ${h.month.tr || h.month.en} ${h.year}`;
         }
       } catch (err) {
-        console.log("⚠️ Namaz verisi paketlenemedi, pas geçildi.");
+        console.log("⚠️ Namaz verisi paketlenemedi.");
       }
     }
 
@@ -261,7 +267,7 @@ async function tumHizmetleriGuncelle() {
     console.log("🚀 Dükkan mermi gibi güncellendi!");
 
   } catch (error) {
-    console.error("❌ Motor Patladı:", error.message);
+    console.error("❌ ANA MOTOR ÇÖKTÜ:", error.message || error);
   }
 }
 
